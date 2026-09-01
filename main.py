@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 import pymysql
 
+# Module ReportLab pentru generare PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -14,6 +15,7 @@ from reportlab.lib import colors
 
 app = FastAPI(title="API Gestiune Stocuri Mobilă")
 
+# Configurare CORS pentru Frontend (Svelte)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,10 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_HOST = os.getenv("DB_HOST", "mysql-2b58dbb-andreiiosif00-c9fa.g.aivencloud.com")
+# Configurare conectare la baza de date MySQL (Aiven Cloud prin Environment Variables)
+DB_HOST = os.getenv("DB_HOST", "mysql-2b58dbb-mysql-gestiune-stocuri.f.aivencloud.com")
 DB_USER = os.getenv("DB_USER", "avnadmin")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")  
-DB_PORT = int(os.getenv("DB_PORT", "24340"))
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_PORT = int(os.getenv("DB_PORT", "27889"))
 DB_NAME = os.getenv("DB_NAME", "defaultdb")
 
 
@@ -44,6 +47,7 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Eroare conectare Baza de Date: {str(e)}")
 
 
+# Modele de date Pydantic
 class ProdusCreate(BaseModel):
     nume: str
     categorie_id: int
@@ -73,7 +77,7 @@ def get_produse():
         with conn.cursor() as cursor:
             query = """
                 SELECT 
-                    v.varianta_id,
+                    v.id AS varianta_id,
                     p.nume AS produs_nume,
                     v.sku,
                     v.culoare,
@@ -82,12 +86,12 @@ def get_produse():
                     v.pret_achizitie,
                     v.pret_vanzare,
                     v.stoc_curent,
-                    v.stoc_minim_alerta,
+                    p.stoc_minim_alerta,
                     c.nume AS categorie_nume
-                FROM VarianteProdus v
-                JOIN Produse p ON v.produs_id = p.produs_id
-                JOIN Categorii c ON p.categorie_id = c.categorie_id
-                ORDER BY v.varianta_id DESC
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
+                JOIN categorii c ON p.categorie_id = c.id
+                ORDER BY v.id DESC
             """
             cursor.execute(query)
             produse = cursor.fetchall()
@@ -101,22 +105,22 @@ def create_produs(produs: ProdusCreate):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT produs_id FROM Produse WHERE nume = %s", (produs.nume,))
+            cursor.execute("SELECT id FROM produse WHERE nume = %s", (produs.nume,))
             existent = cursor.fetchone()
 
             if existent:
-                produs_id = existent["produs_id"]
+                produs_id = existent["id"]
             else:
                 cursor.execute(
-                    "INSERT INTO Produse (nume, categorie_id) VALUES (%s, %s)",
-                    (produs.nume, produs.categorie_id)
+                    "INSERT INTO produse (nume, categorie_id, stoc_minim_alerta) VALUES (%s, %s, %s)",
+                    (produs.nume, produs.categorie_id, produs.stoc_minim_alerta)
                 )
                 produs_id = cursor.lastrowid
 
             query_varianta = """
-                INSERT INTO VarianteProdus 
-                (produs_id, sku, culoare, material, dimensiune, pret_achizitie, pret_vanzare, stoc_curent, stoc_minim_alerta)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO variante_produse 
+                (produs_id, sku, culoare, material, dimensiune, pret_achizitie, pret_vanzare, stoc_curent)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
             cursor.execute(query_varianta, (
                 produs_id,
@@ -126,8 +130,7 @@ def create_produs(produs: ProdusCreate):
                 produs.dimensiune,
                 produs.pret_achizitie,
                 produs.pret_vanzare,
-                produs.stoc_curent,
-                produs.stoc_minim_alerta
+                produs.stoc_curent
             ))
             conn.commit()
             return {"message": "Produs adăugat cu succes!"}
@@ -144,7 +147,7 @@ def update_stoc(varianta_id: int, stoc_data: StocUpdate):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE VarianteProdus SET stoc_curent = %s WHERE varianta_id = %s",
+                "UPDATE variante_produse SET stoc_curent = %s WHERE id = %s",
                 (stoc_data.stoc_curent, varianta_id)
             )
             conn.commit()
@@ -158,7 +161,7 @@ def delete_varianta(varianta_id: int):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM VarianteProdus WHERE varianta_id = %s", (varianta_id,))
+            cursor.execute("DELETE FROM variante_produse WHERE id = %s", (varianta_id,))
             conn.commit()
             return {"message": "Varianta a fost ștearsă!"}
     finally:
@@ -175,30 +178,31 @@ def get_dashboard_stats():
                     SUM(pret_achizitie * stoc_curent) as valoare_achizitie,
                     SUM(pret_vanzare * stoc_curent) as valoare_vanzare,
                     SUM(stoc_curent) as total_stoc
-                FROM VarianteProdus
+                FROM variante_produse
             """)
             totale = cursor.fetchone()
 
             cursor.execute("""
                 SELECT COUNT(*) as stoc_critic 
-                FROM VarianteProdus 
-                WHERE stoc_curent <= stoc_minim_alerta
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
+                WHERE v.stoc_curent <= p.stoc_minim_alerta
             """)
             critic = cursor.fetchone()
 
             cursor.execute("""
                 SELECT c.nume as categorie, SUM(v.stoc_curent) as stoc
-                FROM VarianteProdus v
-                JOIN Produse p ON v.produs_id = p.produs_id
-                JOIN Categorii c ON p.categorie_id = c.categorie_id
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
+                JOIN categorii c ON p.categorie_id = c.id
                 GROUP BY c.nume
             """)
             stoc_categorii = cursor.fetchall()
 
             cursor.execute("""
                 SELECT p.nume as produs, SUM(v.stoc_curent) as stoc
-                FROM VarianteProdus v
-                JOIN Produse p ON v.produs_id = p.produs_id
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
                 GROUP BY p.nume
                 ORDER BY stoc DESC
                 LIMIT 5
@@ -233,8 +237,8 @@ def export_pdf():
                     v.stoc_curent,
                     v.pret_achizitie,
                     v.pret_vanzare
-                FROM VarianteProdus v
-                JOIN Produse p ON v.produs_id = p.produs_id
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
             """
             cursor.execute(query)
             produse = cursor.fetchall()
@@ -296,8 +300,8 @@ def export_csv():
                     v.stoc_curent,
                     v.pret_achizitie,
                     v.pret_vanzare
-                FROM VarianteProdus v
-                JOIN Produse p ON v.produs_id = p.produs_id
+                FROM variante_produse v
+                JOIN produse p ON v.produs_id = p.id
             """
             cursor.execute(query)
             rows = cursor.fetchall()
