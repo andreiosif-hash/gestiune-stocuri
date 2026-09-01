@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import Chart from 'chart.js/auto';
 
-  const API_BASE_URL = 'https://gestiune-stocuri-api.onrender.com';
+  // URL-ul backend-ului deployed pe Render
+  const API_BASE_URL = 'https://gestiune-stocuri-apii.onrender.com';
 
   let produse = [];
   let searchQuery = '';
@@ -151,7 +152,7 @@
     if (chartCategoriiInstance) chartCategoriiInstance.destroy();
     if (chartTopInstance) chartTopInstance.destroy();
 
-    if (canvasCategorii) {
+    if (canvasCategorii && stats.stoc_categorii) {
       chartCategoriiInstance = new Chart(canvasCategorii, {
         type: 'doughnut',
         data: {
@@ -165,7 +166,7 @@
       });
     }
 
-    if (canvasTop) {
+    if (canvasTop && stats.top_produse) {
       chartTopInstance = new Chart(canvasTop, {
         type: 'bar',
         data: {
@@ -204,8 +205,8 @@
 
   $: produseFiltrate = produse
     .filter(p => {
-      const matchesSearch = p.produs_nume.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = (p.produs_nume || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            (p.sku || '').toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = selectedCategory === 'Toate' || p.categorie_nume === selectedCategory;
       
       let matchesStock = true;
@@ -246,19 +247,19 @@
   <section class="kpi-grid">
     <div class="card">
       <span class="card-title">Valoare Achiziție</span>
-      <p class="valoare">{stats.valoare_achizitie.toLocaleString()} lei</p>
+      <p class="valoare">{(stats.valoare_achizitie || 0).toLocaleString()} lei</p>
     </div>
     <div class="card">
       <span class="card-title">Valoare Vânzare</span>
-      <p class="valoare">{stats.valoare_vanzare.toLocaleString()} lei</p>
+      <p class="valoare">{(stats.valoare_vanzare || 0).toLocaleString()} lei</p>
     </div>
     <div class="card success">
       <span class="card-title">Profit Potențial</span>
-      <p class="valoare">{stats.profit_potential.toLocaleString()} lei</p>
+      <p class="valoare">{(stats.profit_potential || 0).toLocaleString()} lei</p>
     </div>
     <div class="card alert">
       <span class="card-title">Stoc Critic</span>
-      <p class="valoare">{stats.stoc_critic} produse</p>
+      <p class="valoare">{stats.stoc_critic || 0} produse</p>
     </div>
   </section>
 
