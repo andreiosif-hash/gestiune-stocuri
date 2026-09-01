@@ -7,7 +7,6 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 import pymysql
 
-# Module ReportLab pentru generare PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -15,7 +14,6 @@ from reportlab.lib import colors
 
 app = FastAPI(title="API Gestiune Stocuri Mobilă")
 
-# Configurare CORS pentru a permite accesul din Frontend (Svelte)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,10 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configurare conectare la baza de date MySQL (Aiven Cloud)
 DB_HOST = os.getenv("DB_HOST", "mysql-2b58dbb-andreiiosif00-c9fa.g.aivencloud.com")
 DB_USER = os.getenv("DB_USER", "avnadmin")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")  # Citită din mediul de rulare
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")  
 DB_PORT = int(os.getenv("DB_PORT", "24340"))
 DB_NAME = os.getenv("DB_NAME", "defaultdb")
 
@@ -47,18 +44,17 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Eroare conectare Baza de Date: {str(e)}")
 
 
-# Modele de date Pydantic
 class ProdusCreate(BaseModel):
-    produs_nume: str
+    nume: str
     categorie_id: int
     sku: str
-    culoare: str
-    material: str
-    dimensiune: str
+    culoare: str = ""
+    material: str = ""
+    dimensiune: str = ""
     pret_achizitie: float
     pret_vanzare: float
     stoc_curent: int
-    stoc_minim_alerta: int
+    stoc_minim_alerta: int = 2
 
 
 class StocUpdate(BaseModel):
@@ -105,8 +101,7 @@ def create_produs(produs: ProdusCreate):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            # 1. Inserare sau preluare produs de bază
-            cursor.execute("SELECT produs_id FROM Produse WHERE nume = %s", (produs.produs_nume,))
+            cursor.execute("SELECT produs_id FROM Produse WHERE nume = %s", (produs.nume,))
             existent = cursor.fetchone()
 
             if existent:
@@ -114,11 +109,10 @@ def create_produs(produs: ProdusCreate):
             else:
                 cursor.execute(
                     "INSERT INTO Produse (nume, categorie_id) VALUES (%s, %s)",
-                    (produs.produs_nume, produs.categorie_id)
+                    (produs.nume, produs.categorie_id)
                 )
                 produs_id = cursor.lastrowid
 
-            # 2. Inserare variantă de produs
             query_varianta = """
                 INSERT INTO VarianteProdus 
                 (produs_id, sku, culoare, material, dimensiune, pret_achizitie, pret_vanzare, stoc_curent, stoc_minim_alerta)
@@ -176,7 +170,6 @@ def get_dashboard_stats():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            # Valoare totală stoc achiziție și vânzare
             cursor.execute("""
                 SELECT 
                     SUM(pret_achizitie * stoc_curent) as valoare_achizitie,
@@ -186,13 +179,31 @@ def get_dashboard_stats():
             """)
             totale = cursor.fetchone()
 
-            # Produse în stoc critic
             cursor.execute("""
                 SELECT COUNT(*) as stoc_critic 
                 FROM VarianteProdus 
                 WHERE stoc_curent <= stoc_minim_alerta
             """)
             critic = cursor.fetchone()
+
+            cursor.execute("""
+                SELECT c.nume as categorie, SUM(v.stoc_curent) as stoc
+                FROM VarianteProdus v
+                JOIN Produse p ON v.produs_id = p.produs_id
+                JOIN Categorii c ON p.categorie_id = c.categorie_id
+                GROUP BY c.nume
+            """)
+            stoc_categorii = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT p.nume as produs, SUM(v.stoc_curent) as stoc
+                FROM VarianteProdus v
+                JOIN Produse p ON v.produs_id = p.produs_id
+                GROUP BY p.nume
+                ORDER BY stoc DESC
+                LIMIT 5
+            """)
+            top_produse = cursor.fetchall()
 
             val_achizitie = float(totale["valoare_achizitie"] or 0)
             val_vanzare = float(totale["valoare_vanzare"] or 0)
@@ -202,7 +213,9 @@ def get_dashboard_stats():
                 "valoare_vanzare": val_vanzare,
                 "profit_potential": val_vanzare - val_achizitie,
                 "stoc_critic": critic["stoc_critic"],
-                "total_stoc": totale["total_stoc"] or 0
+                "total_stoc": totale["total_stoc"] or 0,
+                "stoc_categorii": stoc_categorii,
+                "top_produse": top_produse
             }
     finally:
         conn.close()
