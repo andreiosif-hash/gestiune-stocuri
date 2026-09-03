@@ -3,7 +3,7 @@
   import Chart from 'chart.js/auto';
 
   // URL-ul backend-ului deployed pe Render
-  const API_BASE_URL = 'https://gestiune-stocuri-apii.onrender.com';
+  const API_BASE_URL = 'https://gestiune-stocuri-api.onrender.com';
 
   let produse = [];
   let searchQuery = '';
