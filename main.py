@@ -12,6 +12,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 app = FastAPI(title="API Gestiune Stocuri Mobilă")
 
@@ -45,6 +47,26 @@ def get_db_connection():
         return connection
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Eroare conectare Baza de Date: {str(e)}")
+
+
+# CONFIGURARE FONT PENTRU DIACRITICE (UTF-8)
+FONT_NAME = 'ArialCustom'
+FONT_BOLD_NAME = 'ArialBoldCustom'
+
+try:
+    win_fonts = "C:\\Windows\\Fonts"
+    arial_path = os.path.join(win_fonts, "arial.ttf")
+    arial_bd_path = os.path.join(win_fonts, "arialbd.ttf")
+
+    if os.path.exists(arial_path) and os.path.exists(arial_bd_path):
+        pdfmetrics.registerFont(TTFont(FONT_NAME, arial_path))
+        pdfmetrics.registerFont(TTFont(FONT_BOLD_NAME, arial_bd_path))
+    else:
+        pdfmetrics.registerFont(TTFont(FONT_NAME, "DejaVuSans.ttf"))
+        pdfmetrics.registerFont(TTFont(FONT_BOLD_NAME, "DejaVuSans-Bold.ttf"))
+except Exception:
+    FONT_NAME = 'Helvetica'
+    FONT_BOLD_NAME = 'Helvetica-Bold'
 
 
 # Modele de date Pydantic
@@ -239,6 +261,7 @@ def export_pdf():
                     v.pret_vanzare
                 FROM variante_produse v
                 JOIN produse p ON v.produs_id = p.id
+                ORDER BY p.nume ASC
             """
             cursor.execute(query)
             produse = cursor.fetchall()
@@ -246,33 +269,75 @@ def export_pdf():
         conn.close()
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
     elements = []
 
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, alignment=1)
+
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName=FONT_BOLD_NAME,
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor("#1E293B"),
+        spaceAfter=15
+    )
+
+    cell_style = ParagraphStyle(
+        'TableCell',
+        fontName=FONT_NAME,
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#334155")
+    )
+
+    header_style = ParagraphStyle(
+        'TableHeader',
+        fontName=FONT_BOLD_NAME,
+        fontSize=10,
+        leading=13,
+        textColor=colors.whitesmoke
+    )
 
     elements.append(Paragraph("Raport Inventar Stocuri - Mobilă", title_style))
-    elements.append(Spacer(1, 20))
+    elements.append(Spacer(1, 10))
 
-    data = [["Produs", "SKU", "Stoc", "Preț Achiziție", "Preț Vânzare"]]
+    data = [[
+        Paragraph("Produs", header_style),
+        Paragraph("SKU", header_style),
+        Paragraph("Stoc", header_style),
+        Paragraph("Preț Achiziție", header_style),
+        Paragraph("Preț Vânzare", header_style)
+    ]]
+
     for p in produse:
         data.append([
-            p["produs_nume"],
-            p["sku"],
-            str(p["stoc_curent"]),
-            f"{p['pret_achizitie']:.2f} lei",
-            f"{p['pret_vanzare']:.2f} lei"
+            Paragraph(str(p["produs_nume"]), cell_style),
+            Paragraph(str(p["sku"]), cell_style),
+            Paragraph(str(p["stoc_curent"]), cell_style),
+            Paragraph(f"{float(p['pret_achizitie']):.2f} lei", cell_style),
+            Paragraph(f"{float(p['pret_vanzare']):.2f} lei", cell_style)
         ])
 
-    table = Table(data)
+    col_widths = [160, 110, 50, 110, 110]
+
+    table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#4F46E5")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
     ]))
 
     elements.append(table)
